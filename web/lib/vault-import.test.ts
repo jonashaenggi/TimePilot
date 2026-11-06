@@ -145,3 +145,11 @@ test("imported data including range times and long fields survives strict backup
   assert.ok(restored.exams[0].id.length <= 100);
   assert.ok(restored.errors[0].id.length <= 100);
 });
+
+test("large Markdown tables stay within the backup schema record limit", async () => {
+  const table = examHeader + Array.from({ length: 10001 }, (_, index) => `| 01.01.2040 | | Statistik | Prüfung ${index} | offen | normal |`).join("\n");
+  const result = await importVault([file("Vault/Pruefungstermine.md", table)]);
+  assert.equal(result.exams.length, 10000);
+  assert.ok(result.warnings.some(warning => warning.includes("Maximal 10000 Prüfungen")));
+  assert.doesNotThrow(() => validateBackup({ ...createEmptyData(), subjects: result.subjects, exams: result.exams, vault: result.vault }));
+});

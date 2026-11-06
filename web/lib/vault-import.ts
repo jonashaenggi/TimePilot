@@ -16,6 +16,7 @@ export interface VaultImport {
 }
 
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
+const MAX_RECORDS = 10000;
 const SUBJECTS = [
   { id: "statistics", name: "Statistik", short: "STAT", color: "#7471e8", aliases: ["statistik", "einfuhrung in die statistik", "statistics"] },
   { id: "architecture", name: "Computer Architecture", short: "CA", color: "#f2a65a", aliases: ["computer architecture", "architecture"] },
@@ -117,6 +118,13 @@ export async function importVault(files: VaultFile[]): Promise<VaultImport> {
   let noteCount = 0;
   let examFileFound = false;
   let vaultMarkerFound = false;
+  const warnedLimits = new Set<string>();
+
+  function limitReached(kind: string, count: number): boolean {
+    if (count < MAX_RECORDS) return false;
+    if (!warnedLimits.has(kind)) { warnings.push(`Maximal ${MAX_RECORDS} ${kind} werden pro Import übernommen; weitere Einträge wurden ausgelassen.`); warnedLimits.add(kind); }
+    return true;
+  }
 
   function subjectFor(raw: string): Subject | undefined {
     const label = plain(raw).replace(/\.md$/i, "").slice(0, 200);
@@ -125,6 +133,7 @@ export async function importVault(files: VaultFile[]): Promise<VaultImport> {
     const known = SUBJECTS.find(subject => subject.aliases.includes(normalized));
     const id = known?.id || (slug(label).length <= 90 ? slug(label) : stableId(label));
     if (!id) return undefined;
+    if (!subjects.has(id) && limitReached("Fächer", subjects.size)) return undefined;
     if (!subjects.has(id)) subjects.set(id, {
       id, name: known?.name || label, short: known?.short || label.split(/\s+/).map(word => word[0]).join("").slice(0, 4).toUpperCase(),
       color: known?.color || "#86a3ad", priority: "normal", noteCount: 0,
@@ -152,6 +161,7 @@ export async function importVault(files: VaultFile[]): Promise<VaultImport> {
     const rawId = field(fields, ["id", "fehler-id"]);
     const id = `vault-error-${stableId(rawId || `${subject.id}-${title}`)}`;
     if (errors.has(id)) { warnings.push(`${path}:${line}: Doppelter Fehlereintrag ausgelassen.`); return; }
+    if (limitReached("Lernfehler", errors.size)) return;
     errors.set(id, { id, title, subjectId: subject.id, dueDate, resolved: /^(erledigt|gelost|beherrscht|abgeschlossen|resolved|true)$/i.test(field(fields, ["status", "resolved"])) });
   }
 
@@ -186,8 +196,8 @@ export async function importVault(files: VaultFile[]): Promise<VaultImport> {
         const normalized = key(line);
         for (const known of SUBJECTS) {
           if (known.aliases.filter(alias => alias.length > 3).some(alias => normalized.includes(alias))) {
-            const subject = subjectFor(known.name)!;
-            applyPriority(subject, line);
+            const subject = subjectFor(known.name);
+            if (subject) applyPriority(subject, line);
           }
         }
       }
@@ -206,6 +216,7 @@ export async function importVault(files: VaultFile[]): Promise<VaultImport> {
         const identity = `${subject.id}-${date}-${slug(title)}`;
         const id = `vault-exam-${stableId(identity)}`;
         if (exams.has(id)) { warnings.push(`${path}:${row.line}: Doppelte Prüfung ausgelassen.`); continue; }
+        if (limitReached("Prüfungen", exams.size)) continue;
         let time: string | undefined;
         const timeRaw = field(row.fields, ["uhrzeit", "zeit", "time"]);
         if (timeRaw && !/^(offen|unbekannt|unknown|tbd|[-–—])$/i.test(timeRaw)) {
